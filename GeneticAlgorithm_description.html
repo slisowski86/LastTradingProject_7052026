@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GA Strategy Pipeline – User Guide</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            background: #f5f7fb;
+            color: #1e2a3e;
+            padding: 2rem;
+            line-height: 1.5;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+            padding: 2rem;
+        }
+        h1 {
+            font-size: 2rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            margin-bottom: 0.5rem;
+        }
+        h2 {
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+            font-size: 1.4rem;
+            border-left: 4px solid #2a5298;
+            padding-left: 1rem;
+        }
+        h3 {
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+            font-size: 1.2rem;
+        }
+        p, li {
+            margin-bottom: 0.75rem;
+            color: #2c3e50;
+        }
+        code {
+            background: #eef2ff;
+            padding: 0.2rem 0.4rem;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+        }
+        pre {
+            background: #1e2a3e;
+            color: #e2e8f0;
+            padding: 1rem;
+            border-radius: 12px;
+            overflow-x: auto;
+            font-size: 0.85rem;
+            margin: 1rem 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+        th, td {
+            border: 1px solid #e2e8f0;
+            padding: 0.6rem;
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background: #f1f5f9;
+            font-weight: 600;
+        }
+        .note {
+            background: #fef9e3;
+            border-left: 4px solid #f59e0b;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 8px;
+        }
+        .footer {
+            margin-top: 2rem;
+            text-align: center;
+            font-size: 0.8rem;
+            color: #64748b;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>📈 Genetic Algorithm Strategy Discovery – EUR/USD 15min</h1>
+    <p>This document explains how to use the GA‑based pipeline to discover robust trading strategies for EUR/USD 15‑minute data (2006‑2023). The pipeline combines random‑initialisation, genetic evolution, pre‑screening, and walk‑forward validation.</p>
+
+    <h2>1. Overview</h2>
+    <p>The search space is enormous (10 momentum + 10 trend strength + 10 volatility + 10 divergence indicators). Exhaustive enumeration is impossible. The GA efficiently explores promising regions by evolving a population of strategies over generations.</p>
+    <p><strong>Pipeline steps:</strong></p>
+    <ol>
+        <li><strong>Pre‑compute signals</strong> – each indicator method is evaluated once and stored.</li>
+        <li><strong>GA evolution</strong> – population of strategies evolves using fitness (Sharpe on a short validation chunk).</li>
+        <li><strong>Take top N candidates</strong> from the final population.</li>
+        <li><strong>Walk‑forward testing</strong> – each candidate is tested on sequential out‑of‑sample chunks; must pass minimum Sharpe &amp; return thresholds on every chunk.</li>
+        <li><strong>Save passing strategies</strong> to a JSONL file.</li>
+    </ol>
+
+    <h2>2. Required Inputs</h2>
+    <table>
+        <tr><th>Input</th><th>Description</th></tr>
+        <tr><td><code>data</code></td><td>Pandas DataFrame with columns <code>Open, High, Low, Close</code> and datetime index (15‑minute frequency).</td></tr>
+        <tr><td><code>indicators</code></td><td>List of indicator instances (RSI, Stochastic, ADX, GarmanKlass, etc.). Each must have <code>.category</code> and decorated signal methods that return numpy arrays of -1,0,1.</td></tr>
+        <tr><td>Pattern lists</td><td>Pre‑defined <code>PATTERNS_2_*</code> and <code>PATTERNS_3_*</code> (already included in the code).</td></tr>
+    </table>
+
+    <h2>3. Key Parameters (function <code>ga_pipeline</code>)</h2>
+    <table>
+        <tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr>
+        <tr><td><code>pop_size</code></td><td>100</td><td>Number of strategies in the GA population.</td></tr>
+        <tr><td><code>generations</code></td><td>30</td><td>Number of evolution cycles.</td></tr>
+        <tr><td><code>mutation_rate</code></td><td>0.2</td><td>Probability of mutating an individual.</td></tr>
+        <tr><td><code>crossover_rate</code></td><td>0.8</td><td>Probability of crossover between two parents.</td></tr>
+        <tr><td><code>pre_screen_bars</code></td><td>5000</td><td>Number of bars used as validation during GA (fitness).</td></tr>
+        <tr><td><code>top_n_candidates</code></td><td>100</td><td>Number of best strategies from final population sent to walk‑forward.</td></tr>
+        <tr><td><code>walk_forward_chunks</code></td><td>None</td><td>List of slices (e.g., <code>[slice(5000,15000), slice(15000,25000)]</code>). If None, automatically splits remaining data equally.</td></tr>
+        <tr><td><code>min_sharpe_chunks</code></td><td>[0.8,0.7,0.6]</td><td>Minimum Sharpe required for each walk‑forward chunk (same length as number of chunks).</td></tr>
+        <tr><td><code>min_return_chunks</code></td><td>[0.02,0.01,0.005]</td><td>Minimum total return required for each walk‑forward chunk.</td></tr>
+        <tr><td><code>output_file</code></td><td>"ga_passing_strategies.jsonl"</td><td>File where passing strategies are saved.</td></tr>
+    </table>
+
+    <h2>4. Running the Pipeline</h2>
+    <pre>
+from your_indicators import RSI, Stochastic, ADX, GarmanKlass, ...   # your real classes
+import pandas as pd
+
+# 1. Load EUR/USD 15min data (example)
+data = pd.read_csv('eurusd_15min.csv', index_col=0, parse_dates=True)
+
+# 2. Instantiate all indicators (10 each)
+rsi = RSI(data, period=14)
+stoch = Stochastic(data, ...)
+adx = ADX(data, ...)
+gk = GarmanKlass(data, ...)
+# ... add divergence indicators etc.
+indicators = [rsi, stoch, adx, gk]   # plus the other 36
+
+# 3. Run GA pipeline
+from ga_pipeline import ga_pipeline   # assuming the code is in a module
+passing = ga_pipeline(
+    indicators, data,
+    pop_size=100,
+    generations=30,
+    pre_screen_bars=5000,
+    top_n_candidates=100,
+    min_sharpe_chunks=[0.7, 0.6, 0.5],
+    min_return_chunks=[0.01, 0.005, 0.002],
+    output_file="eurusd_pass.jsonl"
+)
+    </pre>
+
+    <h2>5. Output Format</h2>
+    <p>Each line in the output JSONL file is a JSON object with:</p>
+    <ul>
+        <li><code>"strategy"</code> – dict with keys <code>entry_long, exit_long, entry_short, exit_short</code>, each a list of signal strings (e.g., <code>["RSI.cross_above_down_level_long", "GK.high_volatility_regime"]</code>).</li>
+        <li><code>"ga_best_sharpe"</code> – Sharpe ratio on the pre‑screen chunk (for the best strategy).</li>
+        <li><code>"final_sharpe"</code> – Sharpe on the last walk‑forward chunk.</li>
+        <li><code>"final_return"</code> – total return on the last walk‑forward chunk.</li>
+    </ul>
+
+    <h2>6. Interpretation of Walk‑Forward Thresholds</h2>
+    <p>The walk‑forward test ensures the strategy works on multiple unseen periods. Example thresholds:</p>
+    <ul>
+        <li><strong>Sharpe 0.7–0.8</strong> → excellent for intraday EUR/USD.</li>
+        <li><strong>Sharpe 0.5–0.7</strong> → acceptable.</li>
+        <li><strong>Sharpe &lt; 0.5</strong> → likely overfitted or poor.</li>
+        <li><strong>Return thresholds</strong> prevent strategies that barely break even despite high Sharpe due to tiny gains.</li>
+    </ul>
+    <div class="note">
+        <strong>⚠️ Tip:</strong> Start with lenient thresholds (e.g., 0.5) on a small random sample, then increase gradually. For final production, use stricter thresholds (e.g., 0.8) and more chunks.
+    </div>
+
+    <h2>7. Performance Expectations</h2>
+    <p>With ~40 indicators, the GA will evaluate about <code>pop_size × generations</code> strategies (e.g., 100 × 30 = 3000) plus the top candidates walk‑forward. This completes in hours on a modern laptop. The random pre‑screening (earlier version) would need >100,000 evaluations – GA is far more efficient.</p>
+
+    <h2>8. Adapting to Your Own Indicators</h2>
+    <ol>
+        <li>Ensure every indicator class has a <code>category</code> attribute (momentum, trend_strength, volatility, divergence).</li>
+        <li>Each signal method must be decorated with <code>@signal(direction, type)</code> and return a numpy array of -1,0,1 (or boolean). The array length must equal <code>len(data)</code>.</li>
+        <li>If your indicator uses different parameter names, adjust the <code>_compute</code> and method implementations.</li>
+        <li>Add your divergence signals – they must contain the word "divergence" in the method name for automatic detection.</li>
+    </ol>
+
+    <h2>9. Troubleshooting</h2>
+    <ul>
+        <li><strong>No passing strategies</strong> – thresholds too strict; lower them or increase pre‑screen bars.</li>
+        <li><strong>GA very slow</strong> – reduce <code>pop_size</code> or <code>generations</code>.</li>
+        <li><strong>Memory error</strong> – reduce number of indicators or use only a subset.</li>
+        <li><strong>Divergence constraint false positives</strong> – ensure divergence method names contain <code>divergence</code> (case‑insensitive).</li>
+    </ul>
+
+    <div class="footer">
+        This document accompanies the GA pipeline code. For full implementation, refer to the provided Python script.
+    </div>
+</div>
+</body>
+</html>
