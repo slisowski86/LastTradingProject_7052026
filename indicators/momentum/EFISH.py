@@ -6,18 +6,14 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from SignalDecorator import signal
 
-
-
 # ----------------------------------------------------------------------
-# Numba-accelerated Fisher Transform core
+# Corrected Numba Fisher core – Ehlers' canonical formula
 # ----------------------------------------------------------------------
 @njit(cache=True)
 def fisher_core(high, low, period):
     """
-    Ehlers Fisher Transform on High/Low arrays.
-    Returns:
-        fisher : array (length n) – Fisher values
-        signal : array (length n) – trigger line (Fisher lagged by 1)
+    Canonical Ehlers Fisher Transform.
+    Returns (fisher, signal_trigger) arrays of length n.
     """
     n = len(high)
     fisher = np.full(n, np.nan)
@@ -27,84 +23,82 @@ def fisher_core(high, low, period):
         return fisher, signal
 
     hl2 = (high + low) / 2.0
-
-    # Compute rolling max and min of hl2 over the period
     max_hl2 = np.empty(n)
     min_hl2 = np.empty(n)
-    for i in range(period - 1, n):
-        window_start = i - period + 1
-        max_val = hl2[i]
-        min_val = hl2[i]
-        for j in range(window_start, i):
-            if hl2[j] > max_val:
-                max_val = hl2[j]
-            if hl2[j] < min_val:
-                min_val = hl2[j]
-        max_hl2[i] = max_val
-        min_hl2[i] = min_val
 
-    # Recursive Fisher transform
-    smooth = 0.0
+    for i in range(period - 1, n):
+        ws = i - period + 1
+        mx = hl2[i]
+        mn = hl2[i]
+        for j in range(ws, i):
+            if hl2[j] > mx: mx = hl2[j]
+            if hl2[j] < mn: mn = hl2[j]
+        max_hl2[i] = mx
+        min_hl2[i] = mn
+
+    value1 = 0.0
+    fish_prev = 0.0
+
     for i in range(period, n):
-        range_hl2 = max_hl2[i] - min_hl2[i]
-        if range_hl2 < 1e-10:
+        rng = max_hl2[i] - min_hl2[i]
+        if rng < 1e-10:
             raw = 0.5
         else:
-            raw = (hl2[i] - min_hl2[i]) / range_hl2
+            raw = (hl2[i] - min_hl2[i]) / rng
         position = 2.0 * (raw - 0.5)          # range [-1, +1]
 
-        if i == period:
-            smooth = position                # initial seed
-        else:
-            smooth = 0.33 * position + 0.67 * smooth
+        # Update Value1 with exponential smoothing and clamp in place
+        value1 = 0.33 * position + 0.67 * value1
+        if value1 > 0.999:
+            value1 = 0.999
+        elif value1 < -0.999:
+            value1 = -0.999
 
-        # Clamp to avoid log(0) or infinity
-        smooth_clamped = max(min(smooth, 0.999), -0.999)
-        fisher[i] = 0.5 * np.log((1.0 + smooth_clamped) / (1.0 - smooth_clamped))
+        # Fisher line with smoothing term (+ 0.5 * previous Fisher)
+        fish = 0.5 * np.log((1.0 + value1) / (1.0 - value1)) + 0.5 * fish_prev
+        fisher[i] = fish
+        fish_prev = fish
 
-        # Signal = previous Fisher value
+        # Trigger = Fisher lagged by 1 bar
         if i > period:
             signal[i] = fisher[i - 1]
 
     return fisher, signal
 
 
-# ----------------------------------------------------------------------
-# FisherTransform indicator class (same structure as your RSI / CCI)
-# ----------------------------------------------------------------------
 class EFISH:
     """
-    Ehlers Fisher Transform – continuous & discrete signals.
+    Ehlers Fisher Transform – canonical implementation.
 
     Continuous  : Fisher > +up_level  (overbought → short)
                   Fisher < down_level (oversold → long)
     Discrete    : Cross above / below zero line
-    Category    : momentum
 
     Parameters
     ----------
     data : pd.DataFrame with 'High','Low','Close'
     period : int, default 10
-    up_level : float, default 2.0
-    down_level : float, default -2.0
+    up_level : float, default 2.5
+        Overbought threshold (Ehlers often uses ±2.5 or ±3).
+    down_level : float, default -2.5
+        Oversold threshold.
     """
-    def __init__(self, data, period=10, up_level=2.0, down_level=-2.0):
+
+    def __init__(self, data, period=10, up_level=2.5, down_level=-2.5):
         self.data = data
         self.period = period
         self.up_level = up_level
         self.down_level = down_level
-        self.fisher, self.fisher_signal = self._compute()
-        self.category = "momentum"
 
-    def _compute(self):
-        """Use the Numba‑accelerated core and wrap results in pd.Series."""
-        high = self.data['High'].values
-        low  = self.data['Low'].values
-        fisher_arr, signal_arr = fisher_core(high, low, self.period)
-        index = self.data.index
-        fisher_series = pd.Series(fisher_arr, index=index, name='Fisher')
-        signal_series = pd.Series(signal_arr, index=index, name='FisherSignal')
-        return fisher_series, signal_series
+        # Compute canonical Fisher
+        fisher_arr, signal_arr = fisher_core(
+            self.data['High'].values,
+            self.data['Low'].values,
+            period
+        )
+        self.fisher = pd.Series(fisher_arr, index=self.data.index, name='Fisher')
+        self.fisher_signal = pd.Series(signal_arr, index=self.data.index, name='FisherSignal')
+        self.category = "momentum"
 
     # ---------- Continuous overbought / oversold ----------
     @signal(direction="short", signal_type="continuous", weight=1.0)
@@ -128,7 +122,7 @@ class EFISH:
         cross = (self.fisher < 0) & (prev >= 0)
         return np.where(cross, -1, 0)
 
-    # ---------- Plot (like your RSI/CCI) ----------
+    # ---------- Plot ----------
     def plot(self, start_idx=None, end_idx=None):
         if start_idx is None:
             start_idx = 0
@@ -139,7 +133,7 @@ class EFISH:
         fisher_plot = self.fisher.iloc[start_idx:end_idx]
         signal_plot = self.fisher_signal.iloc[start_idx:end_idx]
 
-        # Signal arrays
+        # Signals for markers
         above_short = self.above_up_level_short()[start_idx:end_idx]
         below_long  = self.below_down_level_long()[start_idx:end_idx]
         cross_above = self.cross_above_zero_long()[start_idx:end_idx]
@@ -205,11 +199,11 @@ class EFISH:
             name='Fisher'
         ), row=2, col=1)
 
-        # Signal (trigger) line
+        # Trigger line
         fig.add_trace(go.Scatter(
             x=signal_plot.index, y=signal_plot,
             mode='lines', line=dict(color='orange', width=1.2, dash='dot'),
-            name='Fisher Signal'
+            name='Trigger'
         ), row=2, col=1)
 
         # Reference levels
@@ -221,7 +215,7 @@ class EFISH:
                       annotation_text="Zero", row=2, col=1)
 
         fig.update_layout(
-            title='Fisher Transform Trading Signals',
+            title='Fisher Transform (Canonical)',
             xaxis_title='Date', yaxis_title='Price',
             height=800, template='plotly_dark',
             hovermode='x unified',
