@@ -68,7 +68,7 @@ class EIT:
         self.eit = self._compute()
         # Slope (first difference)
         self.slope = self.eit.diff()
-        self.category = "trend_regime"
+        self.category = "trend_direction"
 
     def _compute(self):
         """
