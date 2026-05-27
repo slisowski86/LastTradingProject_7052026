@@ -96,7 +96,7 @@ class EMMode:
         Rolling window length for min-max normalisation.
     """
 
-    def __init__(self, data, threshold: float = 0.5, normalisation_lookback: int = 100):
+    def __init__(self, data, threshold: float = 0.15, normalisation_lookback: int = 100):
         self.data = data
         self.threshold = threshold
         self.normalisation_lookback = normalisation_lookback
