@@ -22,18 +22,30 @@ class AROON:
     @signal(direction="both", signal_type="continuous", weight=1.0)
     def strong_trend_regime(self):
         """1 when max(Aroon Up, Aroon Down) > strong_threshold, else 0."""
-        return np.where(self.trend_strength > self.strong_threshold, 1, 0)
+        return pd.Series(
+            np.where(self.trend_strength > self.strong_threshold, 1, 0),
+            index=self.trend_strength.index,
+            dtype=np.int8
+        )
 
     @signal(direction="both", signal_type="continuous", weight=0.5)
     def moderate_trend_regime(self):
         """1 when trend strength is between weak_threshold and strong_threshold."""
         condition = (self.trend_strength <= self.strong_threshold) & (self.trend_strength >= self.weak_threshold)
-        return np.where(condition, 1, 0)
+        return pd.Series(
+            np.where(condition, 1, 0),
+            index=self.trend_strength.index,
+            dtype=np.int8
+        )
 
     @signal(direction="both", signal_type="continuous", weight=0.2)
     def weak_trend_regime(self):
         """1 when trend strength < weak_threshold (ranging market)."""
-        return np.where(self.trend_strength < self.weak_threshold, 1, 0)
+        return pd.Series(
+            np.where(self.trend_strength < self.weak_threshold, 1, 0),
+            index=self.trend_strength.index,
+            dtype=np.int8
+        )
 
     def plot(self, start_idx=None, end_idx=None):
         if start_idx is None:

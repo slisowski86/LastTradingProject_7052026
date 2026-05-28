@@ -70,17 +70,29 @@ class ChopIndex:
     @signal(direction="both", signal_type="discrete", weight=1.0)
     def trending(self):
         """Returns 1 when CHOP < trending_threshold (trending), else 0."""
-        return np.where(self.chop < self.trending_threshold, 1, 0)
+        return pd.Series(
+            np.where(self.chop < self.trending_threshold, 1, 0),
+            index=self.chop.index,
+            dtype=np.int8
+        )
     
     @signal(direction="both", signal_type="discrete", weight=1.0)
     def choppy(self):
         """Returns 1 when CHOP > choppy_threshold (choppy/ranging), else 0."""
-        return np.where(self.chop > self.choppy_threshold, 1, 0)
+        return pd.Series(
+            np.where(self.chop > self.choppy_threshold, 1, 0),
+            index=self.chop.index,
+            dtype=np.int8
+        )
     
     @signal(direction="both", signal_type="continuous", weight=1.0)
     def neutral(self):
         """Returns 1 when CHOP is between thresholds (transition), else 0."""
-        return np.where((self.chop >= self.trending_threshold) & (self.chop <= self.choppy_threshold), 1, 0)
+        return pd.Series(
+            np.where((self.chop >= self.trending_threshold) & (self.chop <= self.choppy_threshold), 1, 0),
+            index=self.chop.index,
+            dtype=np.int8
+        )
     
     def plot(self, start_idx=None, end_idx=None):
         """
@@ -96,12 +108,13 @@ class ChopIndex:
         df_plot = self.data.iloc[start_idx:end_idx]
         chop_plot = self.chop.iloc[start_idx:end_idx]
         
-        # Get signals for the plotted range
-        trend_signal = self.trending()[start_idx:end_idx]
-        choppy_signal = self.choppy()[start_idx:end_idx]
+        # Get signals for the plotted range – now pd.Series, slice with .iloc
+        trend_signal = self.trending().iloc[start_idx:end_idx]
+        choppy_signal = self.choppy().iloc[start_idx:end_idx]
         
-        idx_trend = np.where(trend_signal == 1)[0]
-        idx_choppy = np.where(choppy_signal == 1)[0]
+        # Datetime indices where signal == 1
+        idx_trend = trend_signal[trend_signal == 1].index
+        idx_choppy = choppy_signal[choppy_signal == 1].index
         
         # Create subplots: price (row1), CHOP (row2)
         fig = make_subplots(
@@ -128,8 +141,8 @@ class ChopIndex:
         # Markers: Trending (green diamonds) and Choppy (red circles)
         fig.add_trace(
             go.Scatter(
-                x=df_plot.index[idx_trend],
-                y=df_plot['Close'].iloc[idx_trend],
+                x=idx_trend,
+                y=df_plot.loc[idx_trend, 'Close'],
                 mode='markers',
                 marker=dict(color='green', size=10, symbol='diamond'),
                 name=f'CHOP < {self.trending_threshold} (trending)'
@@ -138,8 +151,8 @@ class ChopIndex:
         )
         fig.add_trace(
             go.Scatter(
-                x=df_plot.index[idx_choppy],
-                y=df_plot['Close'].iloc[idx_choppy],
+                x=idx_choppy,
+                y=df_plot.loc[idx_choppy, 'Close'],
                 mode='markers',
                 marker=dict(color='red', size=8, symbol='circle', opacity=0.8),
                 name=f'CHOP > {self.choppy_threshold} (choppy)'
@@ -175,7 +188,7 @@ class ChopIndex:
             row=2, col=1
         )
         
-        # Fill areas between thresholds (optional)
+        # Fill areas between thresholds
         fig.add_hrect(
             y0=self.trending_threshold, y1=self.choppy_threshold,
             fillcolor="gray", opacity=0.2, line_width=0,

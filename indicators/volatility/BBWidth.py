@@ -3,15 +3,14 @@ import numpy as np
 from numba import njit
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from SignalDecorator import signal  # your decorator
+from SignalDecorator import signal
 import talib as ta
-
 
 
 class BBWidth:
     def __init__(self, data, period=20, nbdev=2.0,
                  threshold_high=0.4, threshold_low=0.15,
-                 threshold=None,                 # legacy single threshold
+                 threshold=None,
                  dynamic_threshold='percentile',
                  percentile_high=70, percentile_low=30,
                  std_mult_high=1.0, std_mult_low=1.0,
@@ -39,7 +38,7 @@ class BBWidth:
         self.bb_width = self._compute()
         self.category = "volatility"
 
-        # Threshold setup (identical logic to GarmanKlass / EIT)
+        # Threshold setup
         if threshold_high is not None or threshold_low is not None:
             self.threshold_high = threshold_high
             self.threshold_low = threshold_low
@@ -64,7 +63,6 @@ class BBWidth:
             nbdevdn=self.nbdev,
             matype=0
         )
-        # Width as a percentage of the middle band (scale‑invariant)
         width = (upper - lower) / middle * 100.0
         return width
 
@@ -91,7 +89,11 @@ class BBWidth:
             thr = self.threshold_high
         else:
             thr = self.dynamic_high
-        return np.where(self.bb_width > thr, 1, 0)
+        return pd.Series(
+            np.where(self.bb_width > thr, 1, 0),
+            index=self.bb_width.index,
+            dtype=np.int8
+        )
 
     @signal(direction="both", signal_type="continuous", weight=1.0)
     def low_volatility_regime(self):
@@ -99,7 +101,11 @@ class BBWidth:
             thr = self.threshold_low
         else:
             thr = self.dynamic_low
-        return np.where(self.bb_width < thr, 1, 0)
+        return pd.Series(
+            np.where(self.bb_width < thr, 1, 0),
+            index=self.bb_width.index,
+            dtype=np.int8
+        )
 
     @signal(direction="both", signal_type="continuous", weight=1.0)
     def medium_volatility_regime(self):
@@ -109,7 +115,11 @@ class BBWidth:
         else:
             high = self.dynamic_high
             low  = self.dynamic_low
-        return np.where((self.bb_width >= low) & (self.bb_width <= high), 1, 0)
+        return pd.Series(
+            np.where((self.bb_width >= low) & (self.bb_width <= high), 1, 0),
+            index=self.bb_width.index,
+            dtype=np.int8
+        )
 
     def plot(self, start_idx=None, end_idx=None):
         if start_idx is None:
@@ -128,10 +138,11 @@ class BBWidth:
             high_thr = self.dynamic_high.iloc[start_idx:end_idx]
             low_thr  = self.dynamic_low.iloc[start_idx:end_idx]
 
-        high_sig = self.high_volatility_regime()[start_idx:end_idx]
-        low_sig  = self.low_volatility_regime()[start_idx:end_idx]
-        idx_high = np.where(high_sig == 1)[0]
-        idx_low  = np.where(low_sig == 1)[0]
+        # Signals – now pd.Series, slice and get indices directly
+        high_sig = self.high_volatility_regime().iloc[start_idx:end_idx]
+        low_sig  = self.low_volatility_regime().iloc[start_idx:end_idx]
+        idx_high = high_sig[high_sig == 1].index
+        idx_low  = low_sig[low_sig == 1].index
 
         fig = make_subplots(
             rows=2, cols=1, shared_xaxes=True,
@@ -147,13 +158,13 @@ class BBWidth:
         ), row=1, col=1)
 
         fig.add_trace(go.Scatter(
-            x=df_plot.index[idx_high], y=df_plot['Close'].iloc[idx_high],
+            x=idx_high, y=df_plot.loc[idx_high, 'Close'],
             mode='markers', marker=dict(color='orange', size=9, symbol='triangle-up'),
             name='High Volatility'
         ), row=1, col=1)
 
         fig.add_trace(go.Scatter(
-            x=df_plot.index[idx_low], y=df_plot['Close'].iloc[idx_low],
+            x=idx_low, y=df_plot.loc[idx_low, 'Close'],
             mode='markers', marker=dict(color='green', size=7, symbol='circle'),
             name='Low Volatility'
         ), row=1, col=1)

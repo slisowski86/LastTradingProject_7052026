@@ -27,12 +27,20 @@ class ADX:
     @signal(direction="both", signal_type="continuous", weight=1.0)
     def above_level_trend(self):
         """Returns 1 when ADX > trend_threshold (trending market), else 0."""
-        return np.where(self.adx > self.trend_threshold, 1, 0)
+        return pd.Series(
+            np.where(self.adx > self.trend_threshold, 1, 0),
+            index=self.adx.index,
+            dtype=np.int8
+        )
 
     @signal(direction="both", signal_type="continuous", weight=1.0)
     def below_level_nontrend(self):
         """Returns 1 when ADX < trend_threshold (non-trending / ranging market), else 0."""
-        return np.where(self.adx < self.trend_threshold, 1, 0)
+        return pd.Series(
+            np.where(self.adx < self.trend_threshold, 1, 0),
+            index=self.adx.index,
+            dtype=np.int8
+        )
 
     def plot(self, start_idx=None, end_idx=None):
         """
@@ -46,12 +54,13 @@ class ADX:
         df_plot = self.data.iloc[start_idx:end_idx]
         adx_plot = self.adx.iloc[start_idx:end_idx]
 
-        # Get signals for the plotted range
-        trend_signal = self.above_level_trend()[start_idx:end_idx]
-        nontrend_signal = self.below_level_nontrend()[start_idx:end_idx]
+        # Get signals for the plotted range – now pd.Series
+        trend_signal = self.above_level_trend().iloc[start_idx:end_idx]
+        nontrend_signal = self.below_level_nontrend().iloc[start_idx:end_idx]
 
-        idx_trend = np.where(trend_signal == 1)[0]
-        idx_nontrend = np.where(nontrend_signal == 1)[0]
+        # Use label‑based indexing for markers (robust with datetime index)
+        idx_trend = trend_signal[trend_signal == 1].index
+        idx_nontrend = nontrend_signal[nontrend_signal == 1].index
 
         # Create subplots: price (row1), ADX (row2)
         fig = make_subplots(
@@ -78,8 +87,8 @@ class ADX:
         # Markers: Trending (green circles) and Non‑trending (gray circles)
         fig.add_trace(
             go.Scatter(
-                x=df_plot.index[idx_trend],
-                y=df_plot['Close'].iloc[idx_trend],
+                x=idx_trend,
+                y=df_plot.loc[idx_trend, 'Close'],
                 mode='markers',
                 marker=dict(color='green', size=8, symbol='circle'),
                 name=f'ADX > {self.trend_threshold} (trending)'
@@ -88,8 +97,8 @@ class ADX:
         )
         fig.add_trace(
             go.Scatter(
-                x=df_plot.index[idx_nontrend],
-                y=df_plot['Close'].iloc[idx_nontrend],
+                x=idx_nontrend,
+                y=df_plot.loc[idx_nontrend, 'Close'],
                 mode='markers',
                 marker=dict(color='gray', size=6, symbol='circle', opacity=0.7),
                 name=f'ADX < {self.trend_threshold} (non‑trend)'
@@ -117,7 +126,7 @@ class ADX:
             annotation_text=f"Trend threshold ({self.trend_threshold})",
             row=2, col=1
         )
-        # Optional: add level 20 (weak trend) and 50 (strong trend) as references
+        # Optional reference levels
         fig.add_hline(y=20, line_dash="dot", line_color="gray", opacity=0.5, row=2, col=1)
         fig.add_hline(y=50, line_dash="dot", line_color="gray", opacity=0.5, row=2, col=1)
 
