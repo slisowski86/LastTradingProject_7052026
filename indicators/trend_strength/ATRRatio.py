@@ -25,7 +25,7 @@ class ATRRatio:
         Higher = more selective (only strongest volatility events).
     """
     
-    def __init__(self, data, period=14, percentile_window=500, percentile=70.0):
+    def __init__(self, data, period=14, percentile_window=1000, percentile=70.0):
         self.data = data
         self.period = period
         self.percentile_window = percentile_window

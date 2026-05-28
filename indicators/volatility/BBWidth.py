@@ -9,12 +9,12 @@ import talib as ta
 
 class BBWidth:
     def __init__(self, data, period=20, nbdev=2.0,
-                 threshold_high=0.4, threshold_low=0.15,
+                 threshold_high=None, threshold_low=None,
                  threshold=None,
                  dynamic_threshold='percentile',
                  percentile_high=70, percentile_low=30,
                  std_mult_high=1.0, std_mult_low=1.0,
-                 long_window=252):
+                 long_window=2000):
         """
         Bollinger Band Width indicator (relative, in % of the middle band).
 
