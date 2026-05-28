@@ -28,7 +28,7 @@ def donchian_bands(high, low, period):
     return upper, lower
 
 
-class DonchianChannelBreakout:
+class DCBreak:
     """
     Donchian Channel Breakout – discrete entry signals.
 
@@ -55,36 +55,28 @@ class DonchianChannelBreakout:
         self.lower = pd.Series(lower_arr, index=data.index, name='Lower')
         self.middle = (self.upper + self.lower) / 2.0
 
-    # ---------- Discrete entry signals (computed on‑the‑fly) ----------
+    # ---------- Discrete entry signals (now returning indexed pd.Series) ----------
     @signal(direction="long", signal_type="discrete", weight=1.0)
     def long_entry(self):
         """
-        Returns a 1/0 int8 array where 1 marks the first bar with close > upper band.
+        Returns a 1/0 int8 Series where 1 marks the first bar with close > upper band.
         """
-        close = self.data['Close'].values.astype(np.float64)
-        upper = self.upper.values
-
-        prev_close = np.roll(close, 1)
-        prev_close[0] = np.nan
-        prev_upper = np.roll(upper, 1)
-        prev_upper[0] = np.nan
-
+        close = self.data['Close']
+        upper = self.upper
+        prev_close = close.shift(1)
+        prev_upper = upper.shift(1)
         breakout = (close > upper) & (prev_close <= prev_upper)
         return breakout.astype(np.int8)
 
     @signal(direction="short", signal_type="discrete", weight=1.0)
     def short_entry(self):
         """
-        Returns a 1/0 int8 array where 1 marks the first bar with close < lower band.
+        Returns a 1/0 int8 Series where 1 marks the first bar with close < lower band.
         """
-        close = self.data['Close'].values.astype(np.float64)
-        lower = self.lower.values
-
-        prev_close = np.roll(close, 1)
-        prev_close[0] = np.nan
-        prev_lower = np.roll(lower, 1)
-        prev_lower[0] = np.nan
-
+        close = self.data['Close']
+        lower = self.lower
+        prev_close = close.shift(1)
+        prev_lower = lower.shift(1)
         breakdown = (close < lower) & (prev_close >= prev_lower)
         return breakdown.astype(np.int8)
 
@@ -102,15 +94,13 @@ class DonchianChannelBreakout:
         middle_plot = self.middle.iloc[start_idx:end_idx]
         date_idx = df_plot.index
 
-        # Get signal arrays and slice them (as plain NumPy arrays)
-        long_signal = self.long_entry()          # numpy array
-        short_signal = self.short_entry()        # numpy array
-        long_slice = long_signal[start_idx:end_idx]
-        short_slice = short_signal[start_idx:end_idx]
+        # Get signal Series and slice them (preserving datetime index)
+        long_signal = self.long_entry().iloc[start_idx:end_idx]
+        short_signal = self.short_entry().iloc[start_idx:end_idx]
 
-        # Find indices where signal == 1
-        long_points = date_idx[long_slice == 1]
-        short_points = date_idx[short_slice == 1]
+        # Datetime index where signal == 1
+        long_points = long_signal[long_signal == 1].index
+        short_points = short_signal[short_signal == 1].index
 
         fig = go.Figure()
 
@@ -139,7 +129,7 @@ class DonchianChannelBreakout:
             name='Middle'
         ))
 
-        # Entry markers
+        # Entry markers (safe label-based indexing)
         if len(long_points) > 0:
             fig.add_trace(go.Scatter(
                 x=long_points,

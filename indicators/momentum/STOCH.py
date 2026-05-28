@@ -32,49 +32,55 @@ class STOCH:
             self.data['High'], self.data['Low'], self.data['Close'],
             fastk_period=self.fastk_period,
             slowk_period=self.slowk_period,
-            slowk_matype=0,          # simple moving average
+            slowk_matype=0,
             slowd_period=self.slowd_period,
             slowd_matype=0
         )
         return slowk, slowd
 
+    # ---------- Corrected signals: always return indexed Series ----------
     @signal(direction="long", signal_type="continuous")
     def k_below_down_level_long(self):
-        return np.where(self.slowk < self.down_level, 1, 0)
+        return pd.Series(
+            np.where(self.slowk < self.down_level, 1, 0),
+            index=self.slowk.index,
+            dtype=np.int8
+        )
 
     @signal(direction="short", signal_type="continuous")
     def k_above_up_level_short(self):
-        return np.where(self.slowk > self.up_level, -1, 0)
+        return pd.Series(
+            np.where(self.slowk > self.up_level, -1, 0),
+            index=self.slowk.index,
+            dtype=np.int8
+        )
 
     @signal(direction="long", signal_type="discrete", weight=2.0)
     def kd_cross_below_down_level_long(self):
-        """
-        Long signal when %K crosses above %D (bullish crossover)
-        and the crossover occurs while both are below down_level.
-        """
         k_above_d = self.slowk > self.slowd
         prev_k_above_d = self.slowk.shift(1) > self.slowd.shift(1)
         bullish_cross = k_above_d & ~prev_k_above_d
         both_below = (self.slowk < self.down_level) & (self.slowd < self.down_level)
-        return np.where(bullish_cross & both_below, 1, 0)
+        return pd.Series(
+            np.where(bullish_cross & both_below, 1, 0),
+            index=self.slowk.index,
+            dtype=np.int8
+        )
 
     @signal(direction="short", signal_type="discrete", weight=2.0)
     def kd_cross_above_up_level_short(self):
-        """
-        Short signal when %K crosses below %D (bearish crossover)
-        and the crossover occurs while both are above up_level.
-        """
         k_below_d = self.slowk < self.slowd
         prev_k_below_d = self.slowk.shift(1) < self.slowd.shift(1)
         bearish_cross = k_below_d & ~prev_k_below_d
         both_above = (self.slowk > self.up_level) & (self.slowd > self.up_level)
-        return np.where(bearish_cross & both_above, -1, 0)
+        return pd.Series(
+            np.where(bearish_cross & both_above, -1, 0),
+            index=self.slowk.index,
+            dtype=np.int8
+        )
 
+    # ---------- Plot (using label‑based indexing) ----------
     def plot(self, start_idx=None, end_idx=None):
-        """
-        Create an interactive Plotly chart with candlesticks, Stochastic %K/%D,
-        and signal markers on the price chart.
-        """
         if start_idx is None:
             start_idx = 0
         if end_idx is None:
@@ -82,17 +88,19 @@ class STOCH:
 
         df_plot = self.data.iloc[start_idx:end_idx]
 
+        # Slice the signal Series – now they carry the index
         signals = {
-            'k_below_long': self.k_below_down_level_long()[start_idx:end_idx],
-            'k_above_short': self.k_above_up_level_short()[start_idx:end_idx],
-            'kd_cross_below_long': self.kd_cross_below_down_level_long()[start_idx:end_idx],
-            'kd_cross_above_short': self.kd_cross_above_up_level_short()[start_idx:end_idx]
+            'k_below_long': self.k_below_down_level_long().iloc[start_idx:end_idx],
+            'k_above_short': self.k_above_up_level_short().iloc[start_idx:end_idx],
+            'kd_cross_below_long': self.kd_cross_below_down_level_long().iloc[start_idx:end_idx],
+            'kd_cross_above_short': self.kd_cross_above_up_level_short().iloc[start_idx:end_idx]
         }
 
-        idx_k_below = np.where(signals['k_below_long'] == 1)[0]
-        idx_k_above = np.where(signals['k_above_short'] == -1)[0]
-        idx_kd_cross_below = np.where(signals['kd_cross_below_long'] == 1)[0]
-        idx_kd_cross_above = np.where(signals['kd_cross_above_short'] == -1)[0]
+        # Datetime indices for markers
+        idx_k_below = signals['k_below_long'][signals['k_below_long'] == 1].index
+        idx_k_above = signals['k_above_short'][signals['k_above_short'] == -1].index
+        idx_kd_cross_below = signals['kd_cross_below_long'][signals['kd_cross_below_long'] == 1].index
+        idx_kd_cross_above = signals['kd_cross_above_short'][signals['kd_cross_above_short'] == -1].index
 
         fig = make_subplots(
             rows=2, cols=1,
@@ -102,7 +110,7 @@ class STOCH:
             subplot_titles=('Price', 'Stochastic Oscillator')
         )
 
-        # Candlestick chart
+        # Candlestick
         fig.add_trace(
             go.Candlestick(
                 x=df_plot.index,
@@ -118,8 +126,8 @@ class STOCH:
         # Continuous signals (circles)
         fig.add_trace(
             go.Scatter(
-                x=df_plot.index[idx_k_below],
-                y=df_plot['Close'].iloc[idx_k_below],
+                x=idx_k_below,
+                y=df_plot.loc[idx_k_below, 'Close'],
                 mode='markers',
                 marker=dict(color='green', size=8, symbol='circle'),
                 name='%K < 20 (long)'
@@ -128,8 +136,8 @@ class STOCH:
         )
         fig.add_trace(
             go.Scatter(
-                x=df_plot.index[idx_k_above],
-                y=df_plot['Close'].iloc[idx_k_above],
+                x=idx_k_above,
+                y=df_plot.loc[idx_k_above, 'Close'],
                 mode='markers',
                 marker=dict(color='red', size=8, symbol='circle'),
                 name='%K > 80 (short)'
@@ -140,8 +148,8 @@ class STOCH:
         # KD bullish crossover below 20 (green up‑arrow)
         fig.add_trace(
             go.Scatter(
-                x=df_plot.index[idx_kd_cross_below],
-                y=df_plot['Low'].iloc[idx_kd_cross_below] * 0.9996,
+                x=idx_kd_cross_below,
+                y=df_plot.loc[idx_kd_cross_below, 'Low'] * 0.9996,
                 mode='markers',
                 marker=dict(color='lime', size=14, symbol='arrow-up'),
                 name='KD bullish cross <20 (long)'
@@ -151,8 +159,8 @@ class STOCH:
         # KD bearish crossover above 80 (red down‑arrow)
         fig.add_trace(
             go.Scatter(
-                x=df_plot.index[idx_kd_cross_above],
-                y=df_plot['High'].iloc[idx_kd_cross_above] * 1.0004,
+                x=idx_kd_cross_above,
+                y=df_plot.loc[idx_kd_cross_above, 'High'] * 1.0004,
                 mode='markers',
                 marker=dict(color='orange', size=14, symbol='arrow-down'),
                 name='KD bearish cross >80 (short)'

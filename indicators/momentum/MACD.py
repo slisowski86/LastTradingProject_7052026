@@ -27,7 +27,7 @@ class MACD:
         self.slow_period = slow_period
         self.signal_period = signal_period
         self.macd_line, self.signal_line, self.histogram = self._compute()
-        self.category = "trend"  # or "momentum", as you prefer
+        self.category = "trend"   # or "momentum"
 
     def _compute(self):
         """Compute MACD line, signal line, and histogram using TA-Lib."""
@@ -39,6 +39,7 @@ class MACD:
         )
         return macd, signal_line, hist
 
+    # ---------- Corrected signals: return indexed pd.Series ----------
     @signal(direction="long", signal_type="discrete", weight=1.0)
     def macd_cross_above_zero_long(self):
         """
@@ -48,7 +49,11 @@ class MACD:
         macd = self.macd_line
         prev_macd = macd.shift(1)
         cross_up = (macd > 0) & (prev_macd <= 0)
-        return np.where(cross_up, 1, 0)
+        return pd.Series(
+            np.where(cross_up, 1, 0),
+            index=self.macd_line.index,
+            dtype=np.int8
+        )
 
     @signal(direction="short", signal_type="discrete", weight=1.0)
     def macd_cross_below_zero_short(self):
@@ -59,13 +64,14 @@ class MACD:
         macd = self.macd_line
         prev_macd = macd.shift(1)
         cross_down = (macd < 0) & (prev_macd >= 0)
-        return np.where(cross_down, -1, 0)
+        return pd.Series(
+            np.where(cross_down, -1, 0),
+            index=self.macd_line.index,
+            dtype=np.int8
+        )
 
+    # ---------- Plot (label‑based indexing) ----------
     def plot(self, start_idx=None, end_idx=None):
-        """
-        Interactive Plotly chart with candlesticks, MACD indicator,
-        and zero‑line crossover markers on the price chart.
-        """
         if start_idx is None:
             start_idx = 0
         if end_idx is None:
@@ -73,12 +79,13 @@ class MACD:
 
         df_plot = self.data.iloc[start_idx:end_idx]
 
-        # Compute signal arrays for the plotted range
-        long_signal = self.macd_cross_above_zero_long()[start_idx:end_idx]
-        short_signal = self.macd_cross_below_zero_short()[start_idx:end_idx]
+        # Slice signal Series (preserving datetime index)
+        long_signal = self.macd_cross_above_zero_long().iloc[start_idx:end_idx]
+        short_signal = self.macd_cross_below_zero_short().iloc[start_idx:end_idx]
 
-        idx_long = np.where(long_signal == 1)[0]
-        idx_short = np.where(short_signal == -1)[0]
+        # Datetime indices where signal fires
+        idx_long = long_signal[long_signal == 1].index
+        idx_short = short_signal[short_signal == -1].index
 
         macd_plot = self.macd_line.iloc[start_idx:end_idx]
         signal_plot = self.signal_line.iloc[start_idx:end_idx]
@@ -92,7 +99,7 @@ class MACD:
             subplot_titles=('Price', 'MACD')
         )
 
-        # ------------------ Price candlestick ------------------
+        # ---------- Price candlestick ----------
         fig.add_trace(
             go.Candlestick(
                 x=df_plot.index,
@@ -108,8 +115,8 @@ class MACD:
         # Long signal markers (green up‑arrow)
         fig.add_trace(
             go.Scatter(
-                x=df_plot.index[idx_long],
-                y=df_plot['Low'].iloc[idx_long] * 0.9996,
+                x=idx_long,
+                y=df_plot.loc[idx_long, 'Low'] * 0.9996,
                 mode='markers',
                 marker=dict(color='lime', size=14, symbol='arrow-up'),
                 name='MACD cross above 0 (long)'
@@ -120,8 +127,8 @@ class MACD:
         # Short signal markers (red down‑arrow)
         fig.add_trace(
             go.Scatter(
-                x=df_plot.index[idx_short],
-                y=df_plot['High'].iloc[idx_short] * 1.0004,
+                x=idx_short,
+                y=df_plot.loc[idx_short, 'High'] * 1.0004,
                 mode='markers',
                 marker=dict(color='orange', size=14, symbol='arrow-down'),
                 name='MACD cross below 0 (short)'
@@ -129,7 +136,7 @@ class MACD:
             row=1, col=1
         )
 
-        # ------------------ MACD panel ------------------
+        # ---------- MACD panel ----------
         # MACD line
         fig.add_trace(
             go.Scatter(x=macd_plot.index, y=macd_plot.values,
@@ -144,7 +151,7 @@ class MACD:
                        name='Signal'),
             row=2, col=1
         )
-        # Histogram (optional, as bar chart)
+        # Histogram
         colors = ['green' if val >= 0 else 'red' for val in hist_plot]
         fig.add_trace(
             go.Bar(x=hist_plot.index, y=hist_plot.values,

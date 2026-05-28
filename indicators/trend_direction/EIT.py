@@ -76,18 +76,26 @@ class EIT:
         # 4. Slope (used only for regime filter)
         self.slope = self.eit.diff()
 
-        self.category = "trend_direction"   # overall class category; individual signals override
+        self.category = "trend_direction"
 
-    # ---------- Slope‑based regime filters (NOT the canonical EIT signals) ----------
+    # ---------- Slope‑based regime filters (now returning pd.Series) ----------
     @signal(direction="long", signal_type="continuous", weight=1.0)
     def slope_up_regime(self):
         """+1 while EIT slope > 0 (uptrend regime) – continuous regime filter."""
-        return np.where(self.slope > 0, 1, 0)
+        return pd.Series(
+            np.where(self.slope > 0, 1, 0),
+            index=self.slope.index,
+            dtype=np.int8
+        )
 
     @signal(direction="short", signal_type="continuous", weight=1.0)
     def slope_down_regime(self):
         """‑1 while EIT slope < 0 (downtrend regime) – continuous regime filter."""
-        return np.where(self.slope < 0, -1, 0)
+        return pd.Series(
+            np.where(self.slope < 0, -1, 0),
+            index=self.slope.index,
+            dtype=np.int8
+        )
 
     # ---------- Canonical EIT signals : IT / Trigger crossovers ----------
     @signal(direction="long", signal_type="discrete", weight=1.0)
@@ -96,7 +104,11 @@ class EIT:
         prev_it = self.eit.shift(1)
         prev_trig = self.trigger.shift(1)
         cross = (self.eit > self.trigger) & (prev_it <= prev_trig)
-        return np.where(cross, 1, 0)
+        return pd.Series(
+            np.where(cross, 1, 0),
+            index=self.eit.index,
+            dtype=np.int8
+        )
 
     @signal(direction="short", signal_type="discrete", weight=1.0)
     def bearish_cross(self):
@@ -104,7 +116,11 @@ class EIT:
         prev_it = self.eit.shift(1)
         prev_trig = self.trigger.shift(1)
         cross = (self.eit < self.trigger) & (prev_it >= prev_trig)
-        return np.where(cross, -1, 0)
+        return pd.Series(
+            np.where(cross, -1, 0),
+            index=self.eit.index,
+            dtype=np.int8
+        )
 
     # ---------- Plot ----------
     def plot(self, start_idx=None, end_idx=None):
@@ -117,16 +133,17 @@ class EIT:
         eit_plot = self.eit.iloc[start_idx:end_idx]
         trig_plot = self.trigger.iloc[start_idx:end_idx]
 
-        # Signals for markers
-        up_regime = self.slope_up_regime()[start_idx:end_idx]
-        down_regime = self.slope_down_regime()[start_idx:end_idx]
-        bull_cross = self.bullish_cross()[start_idx:end_idx]
-        bear_cross = self.bearish_cross()[start_idx:end_idx]
+        # Signals for markers – now pd.Series, keep datetime index after slicing
+        up_regime = self.slope_up_regime().iloc[start_idx:end_idx]
+        down_regime = self.slope_down_regime().iloc[start_idx:end_idx]
+        bull_cross = self.bullish_cross().iloc[start_idx:end_idx]
+        bear_cross = self.bearish_cross().iloc[start_idx:end_idx]
 
-        idx_up = np.where(up_regime == 1)[0]
-        idx_down = np.where(down_regime == -1)[0]
-        idx_bull = np.where(bull_cross == 1)[0]
-        idx_bear = np.where(bear_cross == -1)[0]
+        # Use label‑based indices (safe, even with non‑contiguous dates)
+        idx_up = up_regime[up_regime == 1].index
+        idx_down = down_regime[down_regime == -1].index
+        idx_bull = bull_cross[bull_cross == 1].index
+        idx_bear = bear_cross[bear_cross == -1].index
 
         fig = make_subplots(
             rows=2, cols=1, shared_xaxes=True,
@@ -144,26 +161,26 @@ class EIT:
 
         # Regime markers (slope‑based, continuous)
         fig.add_trace(go.Scatter(
-            x=df_plot.index[idx_up], y=df_plot['Close'].iloc[idx_up],
+            x=idx_up, y=df_plot.loc[idx_up, 'Close'],
             mode='markers', marker=dict(color='green', size=6, symbol='circle'),
             name='Slope > 0 (regime)'
         ), row=1, col=1)
 
         fig.add_trace(go.Scatter(
-            x=df_plot.index[idx_down], y=df_plot['Close'].iloc[idx_down],
+            x=idx_down, y=df_plot.loc[idx_down, 'Close'],
             mode='markers', marker=dict(color='red', size=6, symbol='circle'),
             name='Slope < 0 (regime)'
         ), row=1, col=1)
 
         # Discrete crossover markers (arrows)
         fig.add_trace(go.Scatter(
-            x=df_plot.index[idx_bull], y=df_plot['Low'].iloc[idx_bull] * 0.9996,
+            x=idx_bull, y=df_plot.loc[idx_bull, 'Low'] * 0.9996,
             mode='markers', marker=dict(color='lime', size=12, symbol='arrow-up'),
             name='IT cross above Trigger (long)'
         ), row=1, col=1)
 
         fig.add_trace(go.Scatter(
-            x=df_plot.index[idx_bear], y=df_plot['High'].iloc[idx_bear] * 1.0004,
+            x=idx_bear, y=df_plot.loc[idx_bear, 'High'] * 1.0004,
             mode='markers', marker=dict(color='orange', size=12, symbol='arrow-down'),
             name='IT cross below Trigger (short)'
         ), row=1, col=1)

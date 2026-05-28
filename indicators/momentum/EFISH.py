@@ -45,21 +45,18 @@ def fisher_core(high, low, period):
             raw = 0.5
         else:
             raw = (hl2[i] - min_hl2[i]) / rng
-        position = 2.0 * (raw - 0.5)          # range [-1, +1]
+        position = 2.0 * (raw - 0.5)
 
-        # Update Value1 with exponential smoothing and clamp in place
         value1 = 0.33 * position + 0.67 * value1
         if value1 > 0.999:
             value1 = 0.999
         elif value1 < -0.999:
             value1 = -0.999
 
-        # Fisher line with smoothing term (+ 0.5 * previous Fisher)
         fish = 0.5 * np.log((1.0 + value1) / (1.0 - value1)) + 0.5 * fish_prev
         fisher[i] = fish
         fish_prev = fish
 
-        # Trigger = Fisher lagged by 1 bar
         if i > period:
             signal[i] = fisher[i - 1]
 
@@ -100,29 +97,44 @@ class EFISH:
         self.fisher_signal = pd.Series(signal_arr, index=self.data.index, name='FisherSignal')
         self.category = "momentum"
 
-    # ---------- Continuous overbought / oversold ----------
+    # ---------- Corrected signals ----------
     @signal(direction="short", signal_type="continuous", weight=1.0)
     def above_up_level_short(self):
-        return np.where(self.fisher > self.up_level, -1, 0)
+        return pd.Series(
+            np.where(self.fisher > self.up_level, -1, 0),
+            index=self.fisher.index,
+            dtype=np.int8
+        )
 
     @signal(direction="long", signal_type="continuous", weight=1.0)
     def below_down_level_long(self):
-        return np.where(self.fisher < self.down_level, 1, 0)
+        return pd.Series(
+            np.where(self.fisher < self.down_level, 1, 0),
+            index=self.fisher.index,
+            dtype=np.int8
+        )
 
-    # ---------- Discrete zero‑line crossovers ----------
     @signal(direction="long", signal_type="discrete", weight=2.0)
     def cross_above_zero_long(self):
         prev = self.fisher.shift(1)
         cross = (self.fisher > 0) & (prev <= 0)
-        return np.where(cross, 1, 0)
+        return pd.Series(
+            np.where(cross, 1, 0),
+            index=self.fisher.index,
+            dtype=np.int8
+        )
 
     @signal(direction="short", signal_type="discrete", weight=2.0)
     def cross_below_zero_short(self):
         prev = self.fisher.shift(1)
         cross = (self.fisher < 0) & (prev >= 0)
-        return np.where(cross, -1, 0)
+        return pd.Series(
+            np.where(cross, -1, 0),
+            index=self.fisher.index,
+            dtype=np.int8
+        )
 
-    # ---------- Plot ----------
+    # ---------- Plot (label‑based indexing) ----------
     def plot(self, start_idx=None, end_idx=None):
         if start_idx is None:
             start_idx = 0
@@ -133,16 +145,17 @@ class EFISH:
         fisher_plot = self.fisher.iloc[start_idx:end_idx]
         signal_plot = self.fisher_signal.iloc[start_idx:end_idx]
 
-        # Signals for markers
-        above_short = self.above_up_level_short()[start_idx:end_idx]
-        below_long  = self.below_down_level_long()[start_idx:end_idx]
-        cross_above = self.cross_above_zero_long()[start_idx:end_idx]
-        cross_below = self.cross_below_zero_short()[start_idx:end_idx]
+        # Signal slices – keep datetime index
+        above_short = self.above_up_level_short().iloc[start_idx:end_idx]
+        below_long  = self.below_down_level_long().iloc[start_idx:end_idx]
+        cross_above = self.cross_above_zero_long().iloc[start_idx:end_idx]
+        cross_below = self.cross_below_zero_short().iloc[start_idx:end_idx]
 
-        idx_above = np.where(above_short == -1)[0]
-        idx_below = np.where(below_long  ==  1)[0]
-        idx_up    = np.where(cross_above ==  1)[0]
-        idx_down  = np.where(cross_below == -1)[0]
+        # Label‑based indices for markers
+        idx_above = above_short[above_short == -1].index
+        idx_below = below_long[below_long == 1].index
+        idx_up    = cross_above[cross_above == 1].index
+        idx_down  = cross_below[cross_below == -1].index
 
         fig = make_subplots(
             rows=2, cols=1, shared_xaxes=True,
@@ -158,18 +171,18 @@ class EFISH:
             name='Price'
         ), row=1, col=1)
 
-        # Continuous markers (circles)
+        # Continuous markers (circles) – using .loc for safety
         fig.add_trace(go.Scatter(
-            x=df_plot.index[idx_above],
-            y=df_plot['Close'].iloc[idx_above],
+            x=idx_above,
+            y=df_plot.loc[idx_above, 'Close'],
             mode='markers',
             marker=dict(color='red', size=8, symbol='circle'),
             name=f'Fisher > +{self.up_level} (short)'
         ), row=1, col=1)
 
         fig.add_trace(go.Scatter(
-            x=df_plot.index[idx_below],
-            y=df_plot['Close'].iloc[idx_below],
+            x=idx_below,
+            y=df_plot.loc[idx_below, 'Close'],
             mode='markers',
             marker=dict(color='green', size=8, symbol='circle'),
             name=f'Fisher < {self.down_level} (long)'
@@ -177,16 +190,16 @@ class EFISH:
 
         # Discrete zero‑line markers (arrows)
         fig.add_trace(go.Scatter(
-            x=df_plot.index[idx_down],
-            y=df_plot['High'].iloc[idx_down] * 1.0004,
+            x=idx_down,
+            y=df_plot.loc[idx_down, 'High'] * 1.0004,
             mode='markers',
             marker=dict(color='red', size=12, symbol='arrow-down'),
             name='Cross below 0 (short)'
         ), row=1, col=1)
 
         fig.add_trace(go.Scatter(
-            x=df_plot.index[idx_up],
-            y=df_plot['Low'].iloc[idx_up] * 0.9996,
+            x=idx_up,
+            y=df_plot.loc[idx_up, 'Low'] * 0.9996,
             mode='markers',
             marker=dict(color='green', size=12, symbol='arrow-up'),
             name='Cross above 0 (long)'

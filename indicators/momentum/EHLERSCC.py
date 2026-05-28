@@ -17,7 +17,6 @@ def cyber_core(price, alpha=0.07):
     Default 0.07 corresponds to a period of ~27 bars.
     """
     n = len(price)
-    # 4‑bar weighted smoothing
     smooth = np.empty(n)
     for i in range(n):
         if i < 3:
@@ -26,8 +25,6 @@ def cyber_core(price, alpha=0.07):
             smooth[i] = (price[i] + 2*price[i-1] + 2*price[i-2] + price[i-3]) / 6.0
 
     cycle = np.zeros(n)
-
-    # Ehlers' canonical initialisation for the first 7 bars
     for i in range(2, min(7, n)):
         cycle[i] = (price[i] - 2*price[i-1] + price[i-2]) / 4.0
 
@@ -115,16 +112,24 @@ class EHLERSCC:
 
         self.category = "momentum"
 
-    # ---------- Continuous zero‑line signals ----------
+    # ---------- Corrected continuous zero‑line signals ----------
     @signal(direction="long", signal_type="continuous", weight=1.0)
     def above_zero_long(self):
-        return np.where(self.cycle > 0, 1, 0)
+        return pd.Series(
+            np.where(self.cycle > 0, 1, 0),
+            index=self.cycle.index,
+            dtype=np.int8
+        )
 
     @signal(direction="short", signal_type="continuous", weight=1.0)
     def below_zero_short(self):
-        return np.where(self.cycle < 0, -1, 0)
+        return pd.Series(
+            np.where(self.cycle < 0, -1, 0),
+            index=self.cycle.index,
+            dtype=np.int8
+        )
 
-    # ---------- Plot ----------
+    # ---------- Plot (label‑based indexing) ----------
     def plot(self, start_idx=None, end_idx=None):
         if start_idx is None:
             start_idx = 0
@@ -135,10 +140,11 @@ class EHLERSCC:
         cycle_plot = self.cycle.iloc[start_idx:end_idx]
         phase_plot = self.phase.iloc[start_idx:end_idx]
 
-        long_sig  = self.above_zero_long()[start_idx:end_idx]
-        short_sig = self.below_zero_short()[start_idx:end_idx]
-        idx_long  = np.where(long_sig == 1)[0]
-        idx_short = np.where(short_sig == -1)[0]
+        # Slice signal Series – keep datetime index
+        long_sig  = self.above_zero_long().iloc[start_idx:end_idx]
+        short_sig = self.below_zero_short().iloc[start_idx:end_idx]
+        idx_long  = long_sig[long_sig == 1].index
+        idx_short = short_sig[short_sig == -1].index
 
         fig = make_subplots(
             rows=3, cols=1, shared_xaxes=True,
@@ -154,22 +160,24 @@ class EHLERSCC:
             name='Price'
         ), row=1, col=1)
 
+        # Markers using label-based indexing
         fig.add_trace(go.Scatter(
-            x=df_plot.index[idx_long],
-            y=df_plot['Close'].iloc[idx_long],
+            x=idx_long,
+            y=df_plot.loc[idx_long, 'Close'],
             mode='markers',
             marker=dict(color='green', size=6, symbol='circle'),
             name='Cycle > 0 (long)'
         ), row=1, col=1)
 
         fig.add_trace(go.Scatter(
-            x=df_plot.index[idx_short],
-            y=df_plot['Close'].iloc[idx_short],
+            x=idx_short,
+            y=df_plot.loc[idx_short, 'Close'],
             mode='markers',
             marker=dict(color='red', size=6, symbol='circle'),
             name='Cycle < 0 (short)'
         ), row=1, col=1)
 
+        # Colored cycle line (segment by segment)
         colors = ['green' if v > 0 else 'red' if v < 0 else 'gray' for v in cycle_plot]
         for i in range(1, len(cycle_plot)):
             fig.add_trace(go.Scatter(
@@ -179,14 +187,20 @@ class EHLERSCC:
                 showlegend=False
             ), row=2, col=1)
 
-        fig.add_trace(go.Scatter(x=[cycle_plot.index[0]], y=[cycle_plot.iloc[0]],
-                                 mode='lines', line=dict(color='green', width=2),
-                                 name='Uptrend'), row=2, col=1)
-        fig.add_trace(go.Scatter(x=[cycle_plot.index[0]], y=[cycle_plot.iloc[0]],
-                                 mode='lines', line=dict(color='red', width=2),
-                                 name='Downtrend'), row=2, col=1)
+        # Dummy traces for legend (the colored line already uses segments)
+        fig.add_trace(go.Scatter(
+            x=[cycle_plot.index[0]], y=[cycle_plot.iloc[0]],
+            mode='lines', line=dict(color='green', width=2),
+            name='Cycle > 0'
+        ), row=2, col=1)
+        fig.add_trace(go.Scatter(
+            x=[cycle_plot.index[0]], y=[cycle_plot.iloc[0]],
+            mode='lines', line=dict(color='red', width=2),
+            name='Cycle < 0'
+        ), row=2, col=1)
         fig.add_hline(y=0, line_dash="dot", line_color="white", row=2, col=1)
 
+        # Phase line
         fig.add_trace(go.Scatter(x=phase_plot.index, y=phase_plot,
                                  mode='lines', line=dict(color='orange', width=1.5),
                                  name='Phase (deg)'), row=3, col=1)

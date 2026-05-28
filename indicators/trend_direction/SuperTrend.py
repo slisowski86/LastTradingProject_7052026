@@ -122,16 +122,24 @@ class SuperTrend:
         self.super_line = pd.Series(super_arr, index=data.index, name='SuperTrend')
         self.category = "trend_direction"
 
-    # ---------- Continuous regime signals ----------
+    # ---------- Continuous regime signals (now returning pd.Series) ----------
     @signal(direction="long", signal_type="continuous", weight=1.0)
     def long_regime(self):
         """+1 while SuperTrend is bullish (price above band)."""
-        return np.where(self.direction == 1, 1, 0)
+        return pd.Series(
+            np.where(self.direction == 1, 1, 0),
+            index=self.direction.index,
+            dtype=np.int8
+        )
 
     @signal(direction="short", signal_type="continuous", weight=1.0)
     def short_regime(self):
         """-1 while SuperTrend is bearish (price below band)."""
-        return np.where(self.direction == -1, -1, 0)
+        return pd.Series(
+            np.where(self.direction == -1, -1, 0),
+            index=self.direction.index,
+            dtype=np.int8
+        )
 
     # ---------- Plot ----------
     def plot(self, start_idx=None, end_idx=None):
@@ -144,8 +152,9 @@ class SuperTrend:
         dir_plot = self.direction.iloc[start_idx:end_idx]
         line_plot = self.super_line.iloc[start_idx:end_idx]
 
-        long_idx = np.where(dir_plot == 1)[0]
-        short_idx = np.where(dir_plot == -1)[0]
+        # Use label‑based indices for marker coordinates
+        long_idx = dir_plot[dir_plot == 1].index
+        short_idx = dir_plot[dir_plot == -1].index
 
         # Two line traces for performance (with NaN gaps)
         bull_y = line_plot.where(dir_plot == 1, np.nan)
@@ -179,16 +188,16 @@ class SuperTrend:
             name='SuperTrend (bearish)', connectgaps=False
         ), row=1, col=1)
 
-        # Regime markers on close
+        # Regime markers on close – using label indexing
         fig.add_trace(go.Scatter(
-            x=df_plot.index[long_idx], y=df_plot['Close'].iloc[long_idx],
+            x=long_idx, y=df_plot.loc[long_idx, 'Close'],
             mode='markers',
             marker=dict(color='green', size=5, symbol='circle'),
             name='Long regime'
         ), row=1, col=1)
 
         fig.add_trace(go.Scatter(
-            x=df_plot.index[short_idx], y=df_plot['Close'].iloc[short_idx],
+            x=short_idx, y=df_plot.loc[short_idx, 'Close'],
             mode='markers',
             marker=dict(color='red', size=5, symbol='circle'),
             name='Short regime'

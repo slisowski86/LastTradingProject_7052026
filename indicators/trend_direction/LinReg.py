@@ -40,7 +40,6 @@ def rolling_slope(close, period):
         new_val = close[i]
 
         # Update sums (O(1) per step)
-        # The point leaving had x=0 → no direct sum_xy loss
         sum_y_new = sum_y - old_val + new_val
         # Remaining points shift their x index down by 1:
         # sum_xy_new = sum_xy_old - (sum_y_old - old_val) + (period-1)*new_val
@@ -74,16 +73,24 @@ class LinReg:
         slope_arr = rolling_slope(close, period)
         self.slope = pd.Series(slope_arr, index=data.index, name='LinRegSlope')
 
-    # ---------- Continuous regime signals ----------
+    # ---------- Continuous regime signals (now returning pd.Series) ----------
     @signal(direction="long", signal_type="continuous", weight=1.0)
     def long_regime(self):
         """+1 while slope > 0."""
-        return np.where(self.slope > 0, 1, 0)
+        return pd.Series(
+            np.where(self.slope > 0, 1, 0),
+            index=self.slope.index,
+            dtype=np.int8
+        )
 
     @signal(direction="short", signal_type="continuous", weight=1.0)
     def short_regime(self):
         """-1 while slope < 0."""
-        return np.where(self.slope < 0, -1, 0)
+        return pd.Series(
+            np.where(self.slope < 0, -1, 0),
+            index=self.slope.index,
+            dtype=np.int8
+        )
 
     # ---------- Plot ----------
     def plot(self, start_idx=None, end_idx=None):
@@ -96,7 +103,7 @@ class LinReg:
         slope_plot = self.slope.iloc[start_idx:end_idx]
         date_index = df_plot.index
 
-        # Markers for long/short on close price
+        # Markers for long/short on close price (using slope's boolean masks)
         long_mask = slope_plot > 0
         short_mask = slope_plot < 0
 
